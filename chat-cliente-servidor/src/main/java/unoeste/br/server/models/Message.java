@@ -5,8 +5,8 @@ import java.time.LocalDateTime;
 public class Message {
     private int id;
     private int senderId;
-    private int receiverId; // Pode ser null para mensagens de grupo broadcast
-    private Integer groupId; // null para mensagens individuais
+    private int receiverId;
+    private Integer groupId;
     private String content;
     private LocalDateTime timestamp;
     private boolean isRead;

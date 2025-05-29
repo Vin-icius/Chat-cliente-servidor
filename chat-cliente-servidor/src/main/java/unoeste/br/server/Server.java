@@ -8,25 +8,46 @@ import java.net.Socket;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Scanner;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class Server {
 
     private static final int PORT = 12345;
-    private static final int MAX_THREADS = 100; // Número máximo de threads para clientes
+    private static final int MAX_THREADS = 100;
     private ExecutorService pool = Executors.newFixedThreadPool(MAX_THREADS);
 
-    // Mapeia o ID do usuário (do DB) para o ClientHandler correspondente
-    // Usamos synchronizedMap para garantir thread-safety em operações simples (get, put, remove)
     public static Map<Integer, ClientHandler> onlineUsers = Collections.synchronizedMap(new HashMap<>());
-
-    // Mapeia o login do usuário para o ID do usuário (do DB)
     public static Map<String, Integer> userLoginToId = Collections.synchronizedMap(new HashMap<>());
 
-
     public static void main(String[] args) {
+        Scanner consoleScanner = new Scanner(System.in);
+
+        System.out.println("--- Configuração do Banco de Dados ---");
+        System.out.print("Digite o nome de usuário do banco de dados (ex: root): ");
+        String dbUser = consoleScanner.nextLine();
+
+        System.out.print("Digite a senha do banco de dados (ex: root): ");
+        String dbPassword = consoleScanner.nextLine();
+        System.out.println("------------------------------------");
+
+
+        DatabaseManager.setDatabaseCredentials(dbUser, dbPassword);
+
+        try {
+            System.out.println("Testando conexão com o banco de dados...");
+            DatabaseManager.getConnection().close();
+            System.out.println("Conexão com o banco de dados bem-sucedida.");
+        } catch (Exception e) {
+            System.err.println("Falha ao conectar ao banco de dados com as credenciais fornecidas: " + e.getMessage());
+            System.err.println("Verifique as credenciais e a disponibilidade do banco de dados e tente novamente.");
+            consoleScanner.close();
+            return;
+        }
+
         new Server().startServer();
+        consoleScanner.close();
     }
 
     public void startServer() {
@@ -35,7 +56,6 @@ public class Server {
             while (true) {
                 Socket clientSocket = serverSocket.accept();
                 System.out.println("Novo cliente conectado: " + clientSocket.getInetAddress().getHostAddress());
-                // Cada cliente recebe um ClientHandler dedicado
                 ClientHandler clientHandler = new ClientHandler(clientSocket);
                 pool.execute(clientHandler);
             }
@@ -43,11 +63,11 @@ public class Server {
             System.err.println("Erro ao iniciar o servidor: " + e.getMessage());
         } finally {
             pool.shutdown();
+            System.out.println("Servidor encerrado.");
         }
     }
 
     // Método para adicionar um usuário à lista de online
-    // Sincronizado para garantir que a adição seja atômica e consistente
     public static synchronized void addOnlineUser(User user, ClientHandler handler) {
         if (user != null) {
             onlineUsers.put(user.getId(), handler);
@@ -57,7 +77,6 @@ public class Server {
     }
 
     // Método para remover um usuário da lista de online
-    // Sincronizado para garantir que a remoção seja atômica e consistente
     public static synchronized void removeOnlineUser(User user) {
         if (user != null) {
             onlineUsers.remove(user.getId());
@@ -67,7 +86,6 @@ public class Server {
     }
 
     // Método para obter um ClientHandler pelo login do usuário
-    // Sincronizado para garantir leitura consistente do mapa
     public static synchronized ClientHandler getClientHandlerByLogin(String login) {
         Integer userId = userLoginToId.get(login);
         if (userId != null) {
@@ -77,7 +95,6 @@ public class Server {
     }
 
     // Método para obter um ClientHandler pelo ID do usuário
-    // Sincronizado para garantir leitura consistente do mapa
     public static synchronized ClientHandler getClientHandlerById(int userId) {
         return onlineUsers.get(userId);
     }

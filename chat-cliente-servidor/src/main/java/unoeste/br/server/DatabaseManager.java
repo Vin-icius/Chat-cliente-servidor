@@ -13,11 +13,19 @@ import java.util.List;
 public class DatabaseManager {
 
     private static final String DB_URL = "jdbc:mysql://localhost:3306/chat_app?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true";
-    private static final String USER = "root"; // Substitua
-    private static final String PASS = "root";   // Substitua
+    private static String DB_USER;
+    private static String DB_PASS;
+
+    public static void setDatabaseCredentials(String username, String password) {
+        DB_USER = username;
+        DB_PASS = password;
+    }
 
     public static Connection getConnection() throws SQLException {
-        return DriverManager.getConnection(DB_URL, USER, PASS);
+        if (DB_USER == null || DB_PASS == null) {
+            throw new SQLException("As credenciais do banco de dados não foram definidas. Chame DatabaseManager.setDatabaseCredentials primeiro.");
+        }
+        return DriverManager.getConnection(DB_URL, DB_USER, DB_PASS);
     }
 
     public static void registerUser(User user) throws SQLException {
@@ -147,7 +155,6 @@ public class DatabaseManager {
             try (ResultSet generatedKeys = pstmt.getGeneratedKeys()) {
                 if (generatedKeys.next()) {
                     int groupId = generatedKeys.getInt(1);
-                    // O criador já é automaticamente membro
                     addGroupMember(groupId, creatorId, true);
                 }
             }
@@ -243,7 +250,6 @@ public class DatabaseManager {
             pstmt.setInt(2, userId);
             pstmt.executeUpdate();
         }
-        // Também remover entradas da tabela join_requests se existirem
         String deleteJoinRequestsSql = "DELETE FROM join_requests WHERE group_id = ? AND requesting_user_id = ?";
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(deleteJoinRequestsSql)) {
@@ -304,7 +310,7 @@ public class DatabaseManager {
         try (Connection conn = getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             pstmt.setInt(1, senderId);
-            if (receiverId != 0) { // Pode ser 0 para mensagens de grupo broadcast
+            if (receiverId != 0) {
                 pstmt.setInt(2, receiverId);
             } else {
                 pstmt.setNull(2, java.sql.Types.INTEGER);
@@ -343,10 +349,10 @@ public class DatabaseManager {
                             rs.getInt("id"),
                             rs.getInt("sender_id"),
                             rs.getInt("receiver_id"),
-                            null, // Não tem group_id em pending_messages
+                            null,
                             rs.getString("content"),
                             rs.getTimestamp("timestamp").toLocalDateTime(),
-                            false // Sempre false para pendentes
+                            false
                     ));
                 }
             }
@@ -412,8 +418,6 @@ public class DatabaseManager {
         }
     }
 
-    // --- Métodos para Solicitações de Conversa (BUSY) ---
-
     public static void addChatRequest(int senderId, int receiverId) throws SQLException {
         String sql = "INSERT INTO chat_requests (sender_id, receiver_id, status) VALUES (?, ?, 'PENDING') ON DUPLICATE KEY UPDATE status = 'PENDING', request_time = CURRENT_TIMESTAMP";
         try (Connection conn = getConnection();
@@ -436,7 +440,7 @@ public class DatabaseManager {
                 }
             }
         }
-        return null; // Nenhuma solicitação existente
+        return null;
     }
 
     public static void updateChatRequestStatus(int senderId, int receiverId, String status) throws SQLException {
@@ -460,7 +464,6 @@ public class DatabaseManager {
         }
     }
 
-    // NOVO: Método para remover todas as solicitações onde o usuário é o RECEIVER
     public static void removeAllChatRequestsForReceiver(int receiverId) throws SQLException {
         String sql = "DELETE FROM chat_requests WHERE receiver_id = ?";
         try (Connection conn = getConnection();
@@ -470,7 +473,6 @@ public class DatabaseManager {
         }
     }
 
-    // NOVO: Método para remover todas as solicitações onde o usuário é o SENDER
     public static void removeAllChatRequestsForSender(int senderId) throws SQLException {
         String sql = "DELETE FROM chat_requests WHERE sender_id = ?";
         try (Connection conn = getConnection();

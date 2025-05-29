@@ -26,18 +26,14 @@ public class ClientHandler implements Runnable {
     private Socket clientSocket;
     private PrintWriter out;
     private BufferedReader in;
-    private User currentUser; // O usuário autenticado para esta conexão
+    private User currentUser;
 
     public ClientHandler(Socket socket) {
         this.clientSocket = socket;
     }
 
-    // Este método é crucial para verificar se o usuário está logado E ONLINE
-    // A validação de status OFFLINE (do DB) é feita no início de processCommand
-    // Esta função foca se o objeto currentUser foi autenticado e se ele está
-    // realmente ativo (não nulo).
     private boolean isAuthenticatedAndOnline() {
-        return currentUser != null; // Se currentUser é nulo, não está logado
+        return currentUser != null;
     }
 
     @Override
@@ -48,44 +44,32 @@ public class ClientHandler implements Runnable {
 
             String inputLine;
             while ((inputLine = in.readLine()) != null) {
-                // Não logamos o IP se o usuário já estiver logado, para clareza
                 System.out.println("Recebido de " + (isAuthenticatedAndOnline() ? currentUser.getLogin() : clientSocket.getInetAddress().getHostAddress()) + ": " + inputLine);
                 processCommand(inputLine);
-                // Se o cliente enviou LOGOUT e foi processado, a conexão deve ser fechada
                 if (inputLine.equals(Protocol.LOGOUT) && !isAuthenticatedAndOnline()) {
-                    break; // Sai do loop para fechar o socket
+                    break;
                 }
             }
         } catch (IOException e) {
-            // Logar erro de E/S. Se o cliente já estava logado, mostre o login.
             String userIdentifier = isAuthenticatedAndOnline() ? currentUser.getLogin() : clientSocket.getInetAddress().getHostAddress();
             System.err.println("Erro de E/S para o cliente " + userIdentifier + ": " + e.getMessage());
         } finally {
             System.out.println("Finalizando conexão para " + (currentUser != null ? currentUser.getLogin() : "cliente desconhecido"));
             try {
                 if (currentUser != null) {
-                    // **Ponto Crítico:** Garante que o status no DB seja OFFLINE na desconexão
-                    // e que o usuário seja removido das listas online do Server.
-                    // Isso é feito no finally para capturar desconexões inesperadas também.
                     DatabaseManager.updateUserStatus(currentUser.getId(), Status.OFFLINE);
-                    Server.removeOnlineUser(currentUser); // REMOVE DA LISTA GLOBAL DE ONLINE
-                    // Notificar grupos que o usuário saiu
+                    Server.removeOnlineUser(currentUser);
                     List<Group> userGroups = DatabaseManager.getUserGroups(currentUser.getId());
                     for (Group group : userGroups) {
                         if (DatabaseManager.isGroupMember(group.getId(), currentUser.getId())) {
                             notifyGroupMembers(group.getId(), Protocol.SERVER_MSG + currentUser.getLogin() + " saiu do grupo " + group.getName() + ".");
                         }
                     }
-                    // Limpar quaisquer solicitações de chat pendentes ou aceitas envolvendo este usuário
-                    // onde ele é o RECEIVER. Se ele é o SENDER, o status da request será PENDING/ACCEPTED/DECLINED
-                    // e a limpeza deve ser gerenciada pelo REICEVER ao aceitar/recusar ou pelo próprio SENDER ao sair.
-                    // A remoção de requests onde ele é receiver é mais crítica para evitar requests "mortas".
-                    DatabaseManager.removeAllChatRequestsForReceiver(currentUser.getId()); // NOVO MÉTODO
+                    DatabaseManager.removeAllChatRequestsForReceiver(currentUser.getId());
                 }
             } catch (SQLException ex) {
                 System.err.println("Erro SQL ao finalizar recursos do cliente " + (currentUser != null ? currentUser.getLogin() : "") + ": " + ex.getMessage());
             } finally {
-                // Garante que os streams e o socket sejam fechados
                 try {
                     if (in != null) in.close();
                     if (out != null) out.close();
@@ -103,23 +87,17 @@ public class ClientHandler implements Runnable {
         String args = parts.length > 1 ? parts[1] : "";
 
         try {
-            // **Ponto Crítico:** Validação de login e status OFFLINE
-            // REGISTER, LOGIN, RECOVER_PASSWORD são os únicos que podem ser executados sem estar logado/online.
             if (!cmd.equals(Protocol.LOGIN) && !cmd.equals(Protocol.REGISTER) && !cmd.equals(Protocol.RECOVER_PASSWORD)) {
                 if (!isAuthenticatedAndOnline()) {
                     sendMessage(Protocol.NOT_AUTHORIZED + "Você precisa estar logado para realizar esta ação.");
                     return;
                 }
-                // Agora que sabemos que currentUser NÃO é nulo, podemos checar o status do DB
-                User userFromDb = DatabaseManager.getUserById(currentUser.getId()); // Pega o status atualizado do DB
+                User userFromDb = DatabaseManager.getUserById(currentUser.getId());
                 if (userFromDb == null || userFromDb.getStatus() == Status.OFFLINE) {
-                    // Se por algum motivo o currentUser não está nulo, mas o DB diz offline,
-                    // pode ser uma dessincronização. Força o logout lógico aqui.
-                    handleLogoutSilent(); // Tenta limpar o estado do ClientHandler
+                    handleLogoutSilent();
                     sendMessage(Protocol.NOT_AUTHORIZED + "Seu status está OFFLINE. Faça login novamente para prosseguir.");
                     return;
                 }
-                // Atualiza o currentUser local com o status mais recente do DB
                 this.currentUser = userFromDb;
             }
 
@@ -242,18 +220,16 @@ public class ClientHandler implements Runnable {
             return;
         }
 
-        // **Ponto Crítico:** Checagem se o usuário já está online em outra sessão
         if (Server.isUserReallyOnline(user.getLogin())) {
             sendMessage(Protocol.ERROR + "Usuário " + user.getLogin() + " já está online em outra sessão.");
             return;
         }
 
-        this.currentUser = user; // Seta o currentUser do ClientHandler
+        this.currentUser = user;
         DatabaseManager.updateUserStatus(user.getId(), Status.ONLINE);
-        Server.addOnlineUser(user, this); // Adiciona na lista global de online
+        Server.addOnlineUser(user, this);
         sendMessage(Protocol.LOGIN_SUCCESS + user.getLogin());
         sendPendingMessages(user.getId());
-        // Limpar solicitações de chat que estavam pendentes para ele, pois ele estava offline antes
         DatabaseManager.removeAllChatRequestsForReceiver(user.getId());
     }
 
@@ -268,7 +244,7 @@ public class ClientHandler implements Runnable {
                 } else {
                     sendMessage(Protocol.PRIVATE_MESSAGE + "Desconhecido: " + msg.getContent());
                 }
-                DatabaseManager.markMessageAsReceived(msg.getId()); // Marca como recebida
+                DatabaseManager.markMessageAsReceived(msg.getId());
             }
         }
     }
@@ -285,25 +261,21 @@ public class ClientHandler implements Runnable {
     }
 
     private void handleSetStatus(String args) throws SQLException {
-        // isAuthenticatedAndOnline() já verifica se está logado
         try {
             Status newStatus = Status.valueOf(args.trim().toUpperCase());
             DatabaseManager.updateUserStatus(currentUser.getId(), newStatus);
-            currentUser.setStatus(newStatus); // Atualiza o status do objeto currentUser em memória
+            currentUser.setStatus(newStatus);
 
-            // **Ponto Crítico:** Gerenciamento das listas online do Server
             if (newStatus == Status.OFFLINE) {
-                Server.removeOnlineUser(currentUser); // Remove da lista global
+                Server.removeOnlineUser(currentUser);
                 sendMessage(Protocol.SUCCESS + "Seu status foi atualizado para " + newStatus.name() + ". Você está offline e não poderá realizar ações.");
-                // Limpar solicitações de chat recebidas ou enviadas por este usuário
                 DatabaseManager.removeAllChatRequestsForReceiver(currentUser.getId());
-                DatabaseManager.removeAllChatRequestsForSender(currentUser.getId()); // NOVO MÉTODO
+                DatabaseManager.removeAllChatRequestsForSender(currentUser.getId());
             } else {
-                // Se o status não é OFFLINE, e ele está logado, garante que está na lista de online
                 Server.addOnlineUser(currentUser, this);
                 sendMessage(Protocol.SUCCESS + "Seu status foi atualizado para " + newStatus.name() + ".");
                 if (newStatus == Status.ONLINE) {
-                    sendPendingMessages(currentUser.getId()); // Checa por mensagens pendentes ao voltar online
+                    sendPendingMessages(currentUser.getId());
                 }
             }
         } catch (IllegalArgumentException e) {
@@ -312,7 +284,6 @@ public class ClientHandler implements Runnable {
     }
 
     private void handleListUsersByStatus(Status status) throws SQLException {
-        // isAuthenticatedAndOnline() já verifica se está logado
         List<User> users = DatabaseManager.getAllUsersByStatus(status);
         if (users.isEmpty()) {
             sendMessage(Protocol.INFO + "Nenhum usuário com status " + status.name() + ".");
@@ -392,14 +363,13 @@ public class ClientHandler implements Runnable {
             return;
         }
 
-        DatabaseManager.addGroupMember(group.getId(), targetUser.getId(), false); // false para pendente
+        DatabaseManager.addGroupMember(group.getId(), targetUser.getId(), false);
         sendMessage(Protocol.SUCCESS + "Convite enviado para " + userLogin + " entrar no grupo " + groupName + ".");
 
         ClientHandler targetHandler = Server.getClientHandlerById(targetUser.getId());
         if (targetHandler != null) {
             targetHandler.sendMessage(Protocol.GROUP_INVITE + group.getName() + "," + currentUser.getLogin());
         } else {
-            // Se offline, a notificação será perdida ou persistida para envio futuro (não implementado aqui)
         }
     }
 
@@ -462,12 +432,10 @@ public class ClientHandler implements Runnable {
             return;
         }
 
-        // Adiciona como membro pendente, esperando aprovação de todos os membros
         DatabaseManager.addGroupMember(group.getId(), currentUser.getId(), false);
         sendMessage(Protocol.SUCCESS + "Sua solicitação para entrar no grupo '" + groupName + "' foi enviada aos membros.");
 
-        // Notifica todos os membros existentes do grupo para aprovarem/rejeitarem
-        List<User> members = DatabaseManager.getGroupMembers(group.getId(), true); // Apenas membros aceitos
+        List<User> members = DatabaseManager.getGroupMembers(group.getId(), true);
         for (User member : members) {
             ClientHandler memberHandler = Server.getClientHandlerById(member.getId());
             if (memberHandler != null) {
@@ -504,17 +472,15 @@ public class ClientHandler implements Runnable {
             return;
         }
 
-        // Marcar que este membro aceitou a solicitação
         DatabaseManager.recordJoinRequestApproval(group.getId(), requestingUser.getId(), currentUser.getId());
 
-        // Verificar se todos os membros aceitaram
-        List<User> currentMembers = DatabaseManager.getGroupMembers(group.getId(), true); // Membros aceitos
+        List<User> currentMembers = DatabaseManager.getGroupMembers(group.getId(), true);
         int approvalsCount = DatabaseManager.getNumberOfApprovalsForJoinRequest(group.getId(), requestingUser.getId());
         boolean allAccepted = (approvalsCount == currentMembers.size());
 
         if (allAccepted) {
             DatabaseManager.updateGroupMemberAcceptance(group.getId(), requestingUser.getId(), true);
-            DatabaseManager.clearJoinRequestApprovals(group.getId(), requestingUser.getId()); // Limpa as aprovações registradas
+            DatabaseManager.clearJoinRequestApprovals(group.getId(), requestingUser.getId());
             sendMessage(Protocol.SUCCESS + "Solicitação de " + requestingUserLogin + " para o grupo " + groupName + " aprovada.");
             ClientHandler requestingHandler = Server.getClientHandlerById(requestingUser.getId());
             if (requestingHandler != null) {
@@ -554,8 +520,8 @@ public class ClientHandler implements Runnable {
             return;
         }
 
-        DatabaseManager.removeGroupMember(group.getId(), requestingUser.getId()); // Remove a solicitação pendente
-        DatabaseManager.clearJoinRequestApprovals(group.getId(), requestingUser.getId()); // Limpa aprovações
+        DatabaseManager.removeGroupMember(group.getId(), requestingUser.getId());
+        DatabaseManager.clearJoinRequestApprovals(group.getId(), requestingUser.getId());
         sendMessage(Protocol.SUCCESS + "Solicitação de " + requestingUserLogin + " para o grupo " + groupName + " recusada.");
 
         ClientHandler requestingHandler = Server.getClientHandlerById(requestingUser.getId());
@@ -588,7 +554,6 @@ public class ClientHandler implements Runnable {
     }
 
     private void handleSendMessage(String args) throws SQLException {
-        // isAuthenticatedAndOnline() já verifica se está logado e não offline
         int colonIndex = args.indexOf(":");
         if (colonIndex == -1) {
             sendMessage(Protocol.ERROR + "Formato de mensagem inválido. Uso: MSG <destino>:<conteudo>");
@@ -604,18 +569,18 @@ public class ClientHandler implements Runnable {
 
         String formattedMessage = currentUser.getLogin() + " (" + DateTimeFormatter.ofPattern("HH:mm").format(LocalDateTime.now()) + "): " + content;
 
-        if (destination.startsWith("@")) { // Mensagem de grupo
+        if (destination.startsWith("@")) {
             handleGroupMessage(destination, content, formattedMessage);
-        } else { // Mensagem individual
+        } else {
             handlePrivateMessage(destination, content, formattedMessage);
         }
     }
 
     private void handleGroupMessage(String destination, String rawContent, String formattedMessage) throws SQLException {
-        String groupPart = destination.substring(1); // Remove o '@'
+        String groupPart = destination.substring(1);
         int atIndex = groupPart.indexOf("@");
 
-        if (atIndex == -1) { // Mensagem para todos no grupo: @nome_grupo
+        if (atIndex == -1) {
             String groupName = groupPart;
             Group group = DatabaseManager.getGroupByName(groupName);
             if (group == null) {
@@ -629,8 +594,8 @@ public class ClientHandler implements Runnable {
 
             List<User> members = DatabaseManager.getGroupMembers(group.getId(), true);
             for (User member : members) {
-                if (member.getId() != currentUser.getId()) { // Não envia para si mesmo
-                    User memberCurrentStatus = DatabaseManager.getUserById(member.getId()); // Pega status atualizado
+                if (member.getId() != currentUser.getId()) {
+                    User memberCurrentStatus = DatabaseManager.getUserById(member.getId());
                     if (memberCurrentStatus == null || memberCurrentStatus.getStatus() == Status.OFFLINE) {
                         sendMessage(Protocol.MESSAGE_NOT_DELIVERED + "Mensagem para " + member.getLogin() + " (no grupo " + groupName + ") não enviada: usuário offline.");
                         continue;
@@ -639,10 +604,8 @@ public class ClientHandler implements Runnable {
                     ClientHandler memberHandler = Server.getClientHandlerById(member.getId());
                     if (memberHandler != null) {
                         if (memberCurrentStatus.getStatus() == Status.BUSY) {
-                            // NOVO: Solicitar conversa para BUSY em grupo
                             String chatRequestStatus = DatabaseManager.getChatRequestStatus(currentUser.getId(), member.getId());
                             if (chatRequestStatus != null && chatRequestStatus.equals("ACCEPTED")) {
-                                // Se já aceito, envia a mensagem normalmente
                                 memberHandler.sendMessage(Protocol.GROUP_MESSAGE + groupName + "@" + formattedMessage);
                                 DatabaseManager.saveMessage(currentUser.getId(), member.getId(), group.getId(), rawContent, true);
                             } else if (chatRequestStatus != null && chatRequestStatus.equals("PENDING")) {
@@ -653,19 +616,17 @@ public class ClientHandler implements Runnable {
                                 sendMessage(Protocol.INFO + "Solicitação de conversa enviada para " + member.getLogin() + " no grupo " + groupName + ". Aguardando aceitação.");
                             }
                         } else {
-                            // Usuário ONLINE ou AWAY, envia a mensagem diretamente
                             memberHandler.sendMessage(Protocol.GROUP_MESSAGE + groupName + "@" + formattedMessage);
                             DatabaseManager.saveMessage(currentUser.getId(), member.getId(), group.getId(), rawContent, true);
                         }
                     } else {
-                        // Isso só deveria acontecer se o usuário acabou de ficar offline ou a conexão caiu
                         sendMessage(Protocol.MESSAGE_NOT_DELIVERED + "Mensagem para " + member.getLogin() + " (no grupo " + groupName + ") não enviada: usuário não está mais online.");
                     }
                 }
             }
             sendMessage(Protocol.MESSAGE_SENT + "Mensagem enviada para o grupo '" + groupName + "'.");
 
-        } else { // Mensagem privada dentro do grupo: @nome_grupo@login_usuario ou @nome_grupo@login1,login2
+        } else {
             String groupName = groupPart.substring(0, atIndex);
             String targetLoginsString = groupPart.substring(atIndex + 1);
             String[] targetLogins = targetLoginsString.split(",");
@@ -705,7 +666,6 @@ public class ClientHandler implements Runnable {
                 ClientHandler targetHandler = Server.getClientHandlerById(targetUser.getId());
                 if (targetHandler != null) {
                     if (targetUserCurrentStatus.getStatus() == Status.BUSY) {
-                        // NOVO: Solicitar conversa para BUSY em mensagem privada de grupo
                         String chatRequestStatus = DatabaseManager.getChatRequestStatus(currentUser.getId(), targetUser.getId());
                         if (chatRequestStatus != null && chatRequestStatus.equals("ACCEPTED")) {
                             targetHandler.sendMessage(Protocol.GROUP_PRIVATE_MESSAGE + groupName + "@" + currentUser.getLogin() + ": " + rawContent);
@@ -718,7 +678,6 @@ public class ClientHandler implements Runnable {
                             sendMessage(Protocol.INFO + "Solicitação de conversa enviada para " + targetLogin + " no grupo " + groupName + ". Aguardando aceitação.");
                         }
                     } else {
-                        // Usuário ONLINE ou AWAY, envia a mensagem diretamente
                         targetHandler.sendMessage(Protocol.GROUP_PRIVATE_MESSAGE + groupName + "@" + currentUser.getLogin() + ": " + rawContent);
                         DatabaseManager.saveMessage(currentUser.getId(), targetUser.getId(), group.getId(), rawContent, true);
                     }
@@ -776,8 +735,6 @@ public class ClientHandler implements Runnable {
                 }
                 continue;
             }
-
-            // Se o destinatário está ONLINE ou AWAY
             ClientHandler targetHandler = Server.getClientHandlerById(targetUser.getId());
             if (targetHandler != null) {
                 targetHandler.sendMessage(Protocol.PRIVATE_MESSAGE + formattedMessage);
@@ -855,7 +812,7 @@ public class ClientHandler implements Runnable {
             sendMessage(Protocol.ERROR + "Usuário '" + senderLogin + "' não encontrado.");
             return;
         }
-        if (currentUser.getStatus() != Status.BUSY) { // NOVO: Só pode aceitar se estiver BUSY
+        if (currentUser.getStatus() != Status.BUSY) {
             sendMessage(Protocol.ERROR + "Seu status deve ser BUSY para aceitar solicitações de conversa.");
             return;
         }
@@ -888,7 +845,7 @@ public class ClientHandler implements Runnable {
             sendMessage(Protocol.ERROR + "Usuário '" + senderLogin + "' não encontrado.");
             return;
         }
-        if (currentUser.getStatus() != Status.BUSY) { // NOVO: Só pode recusar se estiver BUSY
+        if (currentUser.getStatus() != Status.BUSY) {
             sendMessage(Protocol.ERROR + "Seu status deve ser BUSY para recusar solicitações de conversa.");
             return;
         }
@@ -900,7 +857,7 @@ public class ClientHandler implements Runnable {
         }
 
         DatabaseManager.updateChatRequestStatus(senderUser.getId(), currentUser.getId(), "DECLINED");
-        DatabaseManager.removeChatRequest(senderUser.getId(), currentUser.getId()); // Remove a entrada para limpar
+        DatabaseManager.removeChatRequest(senderUser.getId(), currentUser.getId());
         sendMessage(Protocol.SUCCESS + "Solicitação de conversa de " + senderLogin + " recusada.");
 
         ClientHandler senderHandler = Server.getClientHandlerById(senderUser.getId());
@@ -909,32 +866,20 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    // Método para logout silencioso (sem enviar LOGOUT_SUCCESS ao cliente)
-    // Usado internamente para "deslogar" um ClientHandler se o status no DB estiver offline
     private void handleLogoutSilent() throws SQLException {
         if (currentUser != null) {
-            // Remove da lista global de online, mas não atualiza status no DB (já estaria offline)
             Server.removeOnlineUser(currentUser);
-            // Limpar solicitações de chat que o envolvem
             DatabaseManager.removeAllChatRequestsForReceiver(currentUser.getId());
             DatabaseManager.removeAllChatRequestsForSender(currentUser.getId());
-            // Não notifica grupos nem envia LOGOUT_SUCCESS, pois é "silencioso"
-            this.currentUser = null; // Zera o currentUser para indicar que esta sessão não está mais logada
+            this.currentUser = null;
         }
     }
 
     private void handleLogout() throws SQLException {
         if (isAuthenticatedAndOnline()) {
-            sendMessage(Protocol.LOGOUT_SUCCESS); // Envia mensagem de sucesso antes de desconectar
-            // A maior parte da lógica de limpeza agora está no bloco 'finally' do run()
-            // para garantir que seja executada em qualquer desconexão.
-            // Aqui, apenas zera o currentUser para que o 'finally' saiba que o logout foi intencional
-            // e não um erro.
+            sendMessage(Protocol.LOGOUT_SUCCESS);
             User tempUser = this.currentUser;
-            this.currentUser = null; // Desloga o handler logicamente
-            // Força a atualização do status no DB e remoção da lista online aqui para garantir
-            // que essas ações ocorram *antes* que a thread morra e o finally seja chamado,
-            // garantindo a sincronização em tempo real.
+            this.currentUser = null;
             DatabaseManager.updateUserStatus(tempUser.getId(), Status.OFFLINE);
             Server.removeOnlineUser(tempUser);
             DatabaseManager.removeAllChatRequestsForReceiver(tempUser.getId());
@@ -952,23 +897,17 @@ public class ClientHandler implements Runnable {
 
 
     public void sendMessage(String message) {
-        // Usa um bloco sincronizado para garantir que a escrita no OutputStream seja atômica por ClientHandler
-        // Isso ajuda a evitar que mensagens se misturem se múltiplas threads tentarem escrever ao mesmo tempo
-        // (embora neste design, apenas uma thread ClientHandler deve escrever para seu próprio cliente).
-        // Ainda assim, é uma boa prática para I/O.
         synchronized (out) {
             out.println(message);
         }
     }
 
     private void notifyGroupMembers(int groupId, String message) throws SQLException {
-        List<User> members = DatabaseManager.getGroupMembers(groupId, true); // Apenas membros aceitos
+        List<User> members = DatabaseManager.getGroupMembers(groupId, true);
         for (User member : members) {
-            if (member.getId() != currentUser.getId()) { // Não notifica a si mesmo
+            if (member.getId() != currentUser.getId()) {
                 ClientHandler memberHandler = Server.getClientHandlerById(member.getId());
                 if (memberHandler != null) {
-                    // **Ponto Crítico:** Se um membro de grupo está offline, não o notificamos.
-                    // A regra é que mensagens não são enviadas para offline, então notificações também não.
                     User memberStatus = DatabaseManager.getUserById(member.getId());
                     if (memberStatus != null && memberStatus.getStatus() != Status.OFFLINE) {
                         memberHandler.sendMessage(message);

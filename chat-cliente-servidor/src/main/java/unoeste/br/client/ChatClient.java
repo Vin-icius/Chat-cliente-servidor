@@ -11,8 +11,8 @@ import java.util.Scanner;
 
 public class ChatClient {
 
-    private static final String SERVER_ADDRESS = "localhost"; // Endereço do servidor
-    private static final int SERVER_PORT = 12345;             // Porta do servidor
+    private static String SERVER_ADDRESS; // Endereço do servidor
+    private static int SERVER_PORT;             // Porta do servidor
 
     private Socket socket;
     private PrintWriter out;
@@ -26,13 +26,35 @@ public class ChatClient {
     }
 
     public void startClient() {
+        consoleScanner = new Scanner(System.in); // Inicializa o Scanner aqui para usá-lo antes da conexão
+
+        // Solicita o endereço do servidor ao usuário
+        System.out.print("Digite o endereço do servidor (ex: localhost): ");
+        SERVER_ADDRESS = consoleScanner.nextLine();
+
+        // Solicita a porta do servidor ao usuário
+        while (true) {
+            System.out.print("Digite a porta do servidor (ex: 12345): ");
+            String portInput = consoleScanner.nextLine();
+            try {
+                SERVER_PORT = Integer.parseInt(portInput);
+                if (SERVER_PORT > 0 && SERVER_PORT <= 65535) {
+                    break;
+                } else {
+                    System.err.println("Porta inválida. Deve ser um número entre 1 e 65535.");
+                }
+            } catch (NumberFormatException e) {
+                System.err.println("Entrada inválida. Por favor, digite um número para a porta.");
+            }
+        }
+
         try {
             socket = new Socket(SERVER_ADDRESS, SERVER_PORT);
             out = new PrintWriter(socket.getOutputStream(), true);
             in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            consoleScanner = new Scanner(System.in);
+            // consoleScanner já foi inicializado
 
-            System.out.println("Conectado ao servidor de chat.");
+            System.out.println("Conectado ao servidor de chat em " + SERVER_ADDRESS + ":" + SERVER_PORT);
             System.out.println("Digite 'help' para ver os comandos disponíveis.");
 
             // Inicia a thread para receber mensagens do servidor
@@ -52,17 +74,14 @@ public class ChatClient {
                 }
 
                 if (userInput.equalsIgnoreCase(Protocol.LOGOUT)) {
-                    out.println(userInput); // Envia o comando de logout para o servidor
-                    // O servidor responderá com LOGOUT_SUCCESS e a thread MessageReceiver
-                    // lidará com o fechamento do socket e interrupção da thread do cliente
-                    // Aguarda a thread do receiver terminar para garantir que o logout seja processado
+                    out.println(userInput);
                     try {
-                        receiverThread.join(5000); // Espera no máximo 5 segundos
+                        receiverThread.join(5000);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         System.err.println("Interrupção ao aguardar thread de recebimento.");
                     }
-                    break; // Sai do loop de input principal
+                    break;
                 }
 
                 out.println(userInput);
@@ -94,7 +113,6 @@ public class ChatClient {
     // Método para ser chamado pela thread de recebimento para fechar o cliente
     public void closeClientResources() {
         try {
-            if (consoleScanner != null) consoleScanner.close();
             if (out != null) out.close();
             if (in != null) in.close();
             if (socket != null && !socket.isClosed()) socket.close();

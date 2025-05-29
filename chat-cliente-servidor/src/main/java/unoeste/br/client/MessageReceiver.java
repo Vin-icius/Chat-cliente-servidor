@@ -8,7 +8,7 @@ import java.io.IOException;
 public class MessageReceiver implements Runnable {
 
     private BufferedReader in;
-    private ChatClient client; // Referência à instância do ChatClient para callbacks
+    private ChatClient client;
 
     public MessageReceiver(BufferedReader in, ChatClient client) {
         this.in = in;
@@ -20,23 +20,19 @@ public class MessageReceiver implements Runnable {
         try {
             String serverResponse;
             while ((serverResponse = in.readLine()) != null) {
-                System.out.println(); // Pula para a próxima linha para não sobrepor o prompt
+                System.out.println();
                 processServerResponse(serverResponse);
 
                 System.out.print("> ");
-                System.out.flush(); // Garante que o prompt seja exibido imediatamente
+                System.out.flush();
             }
         } catch (IOException e) {
-            // A exceção IOException aqui é esperada se a conexão for fechada do outro lado (servidor)
-            // ou se o socket do cliente for fechado localmente (e.g., no logout).
-            // A verificação Thread.currentThread().isInterrupted() ajuda a diferenciar.
             if (!Thread.currentThread().isInterrupted()) {
                 System.err.println("Erro ao receber mensagem do servidor: " + e.getMessage());
             }
         } finally {
             System.out.println("\nConexão com o servidor perdida. Encerrando cliente.");
             client.closeClientResources();
-            // Garante que a thread de recebimento realmente termine
             Thread.currentThread().interrupt();
         }
     }
@@ -105,7 +101,7 @@ public class MessageReceiver implements Runnable {
             String senderLogin = response.substring(Protocol.CHAT_REQUEST_NOTIFICATION.length()).trim();
             System.out.println("[SOLICITAÇÃO DE CHAT PRIVADO] O usuário '" + senderLogin + "' deseja iniciar uma conversa com você.");
             System.out.println("Digite 'ACCEPT_CHAT_REQUEST " + senderLogin + "' ou 'DECLINE_CHAT_REQUEST " + senderLogin + "'.");
-        } else if (response.startsWith(Protocol.CHAT_REQUEST_GROUP_NOTIFICATION)) { // NOVO
+        } else if (response.startsWith(Protocol.CHAT_REQUEST_GROUP_NOTIFICATION)) {
             String requestInfo = response.substring(Protocol.CHAT_REQUEST_GROUP_NOTIFICATION.length()).trim();
             String[] parts = requestInfo.split(",", 2);
             if (parts.length == 2) {
